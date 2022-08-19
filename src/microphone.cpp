@@ -8,7 +8,7 @@
 #define I2S_MIC_LEFT_RIGHT_CLOCK GPIO_NUM_22
 #define I2S_MIC_SERIAL_DATA GPIO_NUM_21
 
-static int i2s_init(uint32_t sampling_rate) {
+int i2s_init(uint32_t sampling_rate) {
   // Start listening for audio: MONO @ 8/16KHz
   // don't mess around with this
   i2s_config_t i2s_config = {
@@ -16,10 +16,10 @@ static int i2s_init(uint32_t sampling_rate) {
         .sample_rate = sampling_rate,
         .bits_per_sample = (i2s_bits_per_sample_t)16,
         .channel_format = I2S_MIC_CHANNEL,
-        .communication_format = I2S_COMM_FORMAT_I2S,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = 0,
         .dma_buf_count = 8,
-        .dma_buf_len = 512,
+        .dma_buf_len = 1024,
         .use_apll = false,
         .tx_desc_auto_clear = false,
         .fixed_mclk = -1,
