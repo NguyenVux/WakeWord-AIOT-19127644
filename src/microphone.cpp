@@ -1,7 +1,7 @@
 #include <driver/i2s.h>
 #include <Arduino.h>
 #include <microphone.h>
-
+#include "edge-impulse-sdk/dsp/numpy.hpp"
 #define I2S_MIC_CHANNEL I2S_CHANNEL_FMT_ONLY_LEFT
 // either wire your microphone to the same pins or change these to match your wiring
 #define I2S_MIC_SERIAL_CLOCK GPIO_NUM_26
@@ -50,4 +50,119 @@ int i2s_init(uint32_t sampling_rate) {
   }
 
   return int(ret);
+}
+
+using sample_t = int16_t;
+static sample_t *sampleBuffer;
+static int record_status = 0;
+static uint32_t audio_sampling_frequency = 16000;
+static void audio_inference_callback(uint32_t n_bytes);
+
+static void capture_samples(void* arg) {
+  const int32_t i2s_bytes_to_read = (uint32_t)arg;
+  size_t bytes_read {i2s_bytes_to_read};
+
+  while (true) {
+
+    /* read data at once from i2s */
+    i2s_read((i2s_port_t)1, (void*)sampleBuffer, i2s_bytes_to_read, &bytes_read, 100);
+
+    if (bytes_read <= 0) {
+      Serial.printf("Error in I2S read : %d\r\n", bytes_read);
+    } 
+    else {
+        if (bytes_read < i2s_bytes_to_read) {
+        ESP_LOGW(TAG, "Partial I2S read");
+        }
+
+        // scale the data (otherwise the sound is too quiet)
+        for (int x = 0; x < i2s_bytes_to_read/2; x++) {
+            sampleBuffer[x] = (int16_t)(sampleBuffer[x]) * 8;
+        }
+        
+        // see if are recording samples for ingestion
+        // or inference and send them their way
+
+        audio_inference_callback(i2s_bytes_to_read);
+
+    }
+  }
+  vTaskDelete(NULL);
+}
+
+
+typedef struct {
+    int16_t *buffers[2];
+    uint8_t buf_select;
+    uint8_t buf_ready;
+    uint32_t buf_count;
+    uint32_t n_samples;
+} inference_t;
+
+static inference_t inference;
+bool ei_microphone_inference_start(uint32_t n_samples, float interval_ms)
+{
+    inference.buffers[0] = (int16_t *)malloc(n_samples * sizeof(int16_t));
+
+    if(inference.buffers[0] == NULL) {
+        return false;
+    }
+
+    inference.buffers[1] = (int16_t *)malloc(n_samples * sizeof(int16_t));
+
+    if(inference.buffers[1] == NULL) {
+        free(inference.buffers[0]);
+        return false;
+    }
+
+    uint32_t sample_buffer_size = (n_samples / 100) * sizeof(int16_t);
+    sampleBuffer = (int16_t *)malloc(sample_buffer_size);
+
+    if(sampleBuffer == NULL) {
+        free(inference.buffers[0]);
+        free(inference.buffers[1]);
+        return false;
+    }
+
+    inference.buf_select = 0;
+    inference.buf_count  = 0;
+    inference.n_samples  = n_samples;
+    inference.buf_ready  = 0;
+
+    // Calculate sample rate from sample interval
+    audio_sampling_frequency = (uint32_t)(1000.f / interval_ms);
+
+    if (i2s_init(audio_sampling_frequency)) {
+        Serial.println("Failed to start I2S!");
+    }
+
+
+    record_status = 2;
+
+    xTaskCreate(capture_samples, "CaptureSamples", 1024 * 32, (void*)sample_buffer_size, 10, NULL);
+
+    return true;
+}
+
+
+static void audio_inference_callback(uint32_t n_bytes)
+{
+    for(int i = 0; i < n_bytes>>1; i++) {
+        inference.buffers[inference.buf_select][inference.buf_count++] = sampleBuffer[i];
+        if(inference.buf_count >= inference.n_samples) {
+            inference.buf_select ^= 1;
+            inference.buf_count = 0;
+            inference.buf_ready = 1;
+        }
+    }
+}
+
+int ei_microphone_inference_get_data(size_t offset, size_t length, float *out_ptr)
+{
+    return ei::numpy::int16_to_float(&inference.buffers[inference.buf_select ^ 1][offset], out_ptr, length);
+}
+
+bool ei_microphone_inference_is_recording(void)
+{
+    return inference.buf_ready == 0;
 }
