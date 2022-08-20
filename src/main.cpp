@@ -8,7 +8,7 @@ constexpr bool debug_mode = false;
 static unsigned long long lastEnable;
 static void display_results(ei_impulse_result_t* result)
 {
-  if(NOT debug_mode){
+  if(debug_mode){
     return;
   }
     ei_printf("Predictions (DSP: %d ms., Classification: %d ms., Anomaly: %d ms.): \n",
